@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -31,7 +30,6 @@
         }
     </style>
 </head>
-
 <body>
     <div class="container">
         <h1 class="text-center">Lernplan Generator</h1>
@@ -50,7 +48,7 @@
                     <tr>
                         <td><input type="text" class="form-control" placeholder="Fach"></td>
                         <td><input type="number" class="form-control" placeholder="Gewichtung"></td>
-                        <td><input type="text" class="form-control date-picker" placeholder="Prüfungsdatum auswählen"></td>
+                        <td><input type="text" id="firstExam" class="form-control date-picker examDates" placeholder="Prüfungsdatum auswählen"></td>
                         <td>
                             <button type="button" class="btn btn-success add-row">+</button>
                         </td>
@@ -84,228 +82,8 @@
                 <tbody></tbody>
             </table>
         </div>
-
-        <a id="download-ics" href="#" class="btn btn-success mt-3" style="display:none;">.ics Datei herunterladen</a>
     </div>
 
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            flatpickr(".date-picker", {
-                dateFormat: "d.m.Y",
-                enableTime: false
-            });
-
-            flatpickr("#off-days", {
-                dateFormat: "d.m.Y",
-                mode: "multiple"
-            });
-
-            document
-                .getElementById('generate-plan')
-                .addEventListener('click', () => {
-                    const rows = document.querySelectorAll('#subjects-table tr');
-                    const subjects = [];
-                    const weights = {};
-                    const examDates = {};
-
-                    rows.forEach(row => {
-                        const subject = row
-                            .cells[0]
-                            .querySelector('input')
-                            .value;
-                        const weight = row
-                            .cells[1]
-                            .querySelector('input')
-                            .value;
-                        const examDate = row
-                            .cells[2]
-                            .querySelector('input')
-                            .value;
-
-                        if (subject && weight && examDate) {
-                            subjects.push(subject);
-                            weights[subject] = parseFloat(weight);
-                            examDates[subject] = examDate;
-                        }
-                    });
-
-                    const startDate = document
-                        .getElementById('start-date')
-                        .value;
-                    const offDays = document
-                        .getElementById('off-days')
-                        .value
-                        .split(',')
-                        .map(d => d.trim());
-
-                    const lernPlan = generateLernplan(weights, startDate, offDays, [], examDates);
-
-                    renderTable(lernPlan);
-
-                    const icsContent = generateICS(lernPlan);
-                    const blob = new Blob([icsContent], {type: 'text/calendar'});
-                    const url = URL.createObjectURL(blob);
-                    const downloadLink = document.getElementById('download-ics');
-                    downloadLink.href = url;
-                    downloadLink.download = 'Lernplan.ics';
-                    downloadLink.style.display = 'block';
-                });
-
-            document
-                .querySelector('#subjects-table')
-                .addEventListener('click', (event) => {
-                    if (event.target.classList.contains('add-row')) {
-                        const newRow = document.createElement('tr');
-                        newRow.innerHTML = '<td><input type="text" class="form-control" placeholder="Fach"></td>' + '<td><input type="number" class="form-control" placeholder="Gewichtung"></td>' + '<td><input type="text" class="form-control date-picker" placeholder="Prüfungsdatum auswählen"></td>' + '<td><button type="button" class="btn btn-success add-row">+</button></td>';
-                        document
-                            .getElementById('subjects-table')
-                            .appendChild(newRow);
-                        flatpickr(newRow.querySelectorAll('.date-picker'), {dateFormat: "d.m.Y"});
-                    }
-                });
-        });
-
-        function generateLernplan(weights, starting_date, offDays, offHalfdays, examDates) {
-            const parseDate = (dateStr) => {
-                const [day, month, year] = dateStr
-                    .split('.')
-                    .map(Number);
-                return new Date(year, month - 1, day);
-            };
-
-            const formatDate = (date) => {
-                const day = String(date.getDate()).padStart(2, '0');
-                const month = String(date.getMonth() + 1).padStart(2, '0');
-                const year = date.getFullYear();
-                return `${day}.${month}.${year}`;
-            };
-
-            const endDate = new Date(Math.max(...Object.values(examDates).map(parseDate)));
-            const startDate = parseDate(starting_date);
-            const days = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
-
-            const lernPlan = Array.from({
-                length: days + 1
-            }, () => [null, null]);
-            const dates = Array.from({
-                length: days + 1
-            }, (_, i) => {
-                const date = new Date(startDate);
-                date.setDate(startDate.getDate() + i);
-                return formatDate(date);
-            });
-
-            dates.forEach((date, i) => {
-                if (offDays.includes(date)) {
-                    lernPlan[i] = ['free', 'free'];
-                }
-                if (Object.values(examDates).includes(date)) {
-                    const subject = Object
-                        .keys(examDates)
-                        .find(key => examDates[key] === date);
-                    lernPlan[i] = [`exam ${subject}`, `exam ${subject}`];
-                }
-                if (offHalfdays.includes(date)) {
-                    lernPlan[i][1] = 'free';
-                }
-            });
-
-            const totalWeight = Object
-                .values(weights)
-                .reduce((a, b) => a + b, 0);
-            const totalLernhalbtage = lernPlan
-                .flat()
-                .filter(x => x === null)
-                .length;
-            const subjectsHalfDays = {};
-
-            for (const [subject, weight] of Object.entries(weights)) {
-                subjectsHalfDays[subject] = Math.round((weight / totalWeight) * totalLernhalbtage);
-            }
-
-            let remainingDays = totalLernhalbtage - Object
-                .values(subjectsHalfDays)
-                .reduce((a, b) => a + b, 0);
-            while (remainingDays > 0) {
-                const maxSubject = Object
-                    .keys(subjectsHalfDays)
-                    .reduce(
-                        (a, b) => subjectsHalfDays[a] > subjectsHalfDays[b]
-                        ? a
-                        : b);
-                subjectsHalfDays[maxSubject]++;
-                remainingDays--;
-            }
-
-            const sortedSubjects = Object
-                .keys(examDates)
-                .sort((a, b) => parseDate(examDates[a]) - parseDate(examDates[b]));
-
-            for (const subject of sortedSubjects) {
-                const examIndex = dates.indexOf(examDates[subject]);
-                const availableSlots = lernPlan
-                    .slice(0, examIndex)
-                    .flatMap((day, i) => day.map(
-                        (slot, j) => slot === null
-                        ? [i, j]
-                        : null).filter(x => x));
-
-                if (availableSlots.length >= subjectsHalfDays[subject]) {
-                    const selectedSlots = availableSlots.slice(0, subjectsHalfDays[subject]);
-                    for (const [i, j] of selectedSlots) {
-                        lernPlan[i][j] = subject;
-                    }
-                }
-            }
-
-            return lernPlan.map((day, i) => ({
-                date: dates[i],
-                weekday: new Date(parseDate(dates[i])).toLocaleDateString('de-DE', {weekday: 'long'}),
-                morning: day[0],
-                afternoon: day[1]
-            }));
-        }
-
-        function renderTable(lernPlan) {
-            const tableBody = document.querySelector('#lernplan-table tbody');
-            tableBody.innerHTML = '';
-
-            lernPlan.forEach(({date, weekday, morning, afternoon}) => {
-                const row = document.createElement('tr');
-                row.innerHTML = `
-                                    <td>${date}</td>
-                                    <td>${weekday}</td>
-                                    <td>${morning || ''}</td>
-                                    <td>${afternoon || ''}</td>
-                            `;
-                tableBody.appendChild(row);
-            });
-        }
-
-        function generateICS(lernPlan) {
-            let icsContent = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//My App//Lernplan//EN\n";
-            lernPlan.forEach(({date, morning, afternoon}) => {
-                if (morning) {
-                    icsContent += createICSEvent(date, 'Lernen ' + morning);
-                }
-                if (afternoon) {
-                    icsContent += createICSEvent(date, 'Lernen ' + afternoon);
-                }
-            });
-            icsContent += "END:VCALENDAR";
-            return icsContent;
-        }
-
-        function createICSEvent(date, description) {
-            const start = new Date(date + ' 08:00');
-            const end = new Date(date + ' 12:00');
-            return `BEGIN:VEVENT\nSUMMARY:${description}\nDTSTART:${start
-                .toISOString()
-                .replace(/-|:|\.\d+/g, "")}\nDTEND:${end
-                .toISOString()
-                .replace(/-|:|\.\d+/g, "")}\nEND:VEVENT\n`;
-        }
-    </script>
+    <script src="script.js"></script>
 </body>
-
 </html>
